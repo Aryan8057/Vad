@@ -1,0 +1,95 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Silero VAD Demo</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      margin-top: 50px;
+    }
+
+    #status {
+      display: inline-block;
+      padding: 20px;
+      border-radius: 10px;
+      background: #ddd;
+      font-size: 1.5rem;
+      min-width: 150px;
+      transition: background 0.3s ease;
+    }
+
+    .active {
+      background: #8f8;
+    }
+
+    .inactive {
+      background: #f88;
+    }
+  </style>
+</head>
+<body>
+  <h1>Silero VAD Voice Activity</h1>
+  <button id="startBtn">Start Mic</button>
+  <div id="status" class="inactive">Inactive</div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const statusDiv = document.getElementById('status');
+    let socket, micStream, processor;
+
+    startBtn.onclick = async () => {
+      startBtn.disabled = true;
+
+      // Connect to WebSocket
+      socket = new WebSocket('ws://localhost:8765');
+      socket.binaryType = 'arraybuffer';
+
+      socket.onopen = () => console.log('WebSocket connected');
+      socket.onerror = e => console.error('WebSocket error:', e);
+
+      socket.onmessage = msg => {
+        try {
+          const data = JSON.parse(msg.data);
+          if (data.vad === true) {
+            statusDiv.textContent = 'Active';
+            statusDiv.classList.add('active');
+            statusDiv.classList.remove('inactive');
+          } else {
+            statusDiv.textContent = 'Inactive';
+            statusDiv.classList.add('inactive');
+            statusDiv.classList.remove('active');
+          }
+        } catch (e) {
+          console.error("Failed to parse VAD result:", e, msg.data);
+        }
+      };
+
+      // Start microphone stream
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      micStream = audioCtx.createMediaStreamSource(stream);
+
+      // Use ScriptProcessorNode to access raw PCM audio
+      const bufferSize = 4096;
+      processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+      micStream.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      processor.onaudioprocess = e => {
+        const input = e.inputBuffer.getChannelData(0);
+        const int16 = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          int16[i] = Math.max(-1, Math.min(1, input[i])) * 0x7FFF;
+        }
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(int16.buffer);
+        }
+      };
+    };
+  </script>
+</body>
+</html>
+
